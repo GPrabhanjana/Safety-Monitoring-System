@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Geo Points and Isochrones Mapper</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css" />
+    <style>
+        #map {
+            height: 600px;
+            width: 100%;
+        }
+        .control-panel {
+            margin: 20px 0;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="control-panel">
+        <button id="addPointBtn">Add New Point</button>
+        <span id="instructions" style="display: none;">
+            Click on the map to place a point, then click OK to save
+        </span>
+        <div id="pointForm" style="display: none;">
+            <input type="datetime-local" id="timestamp" required>
+            <button id="savePointBtn">OK</button>
+            <button id="cancelBtn">Cancel</button>
+        </div>
+    </div>
+    
+    <div id="map"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js"></script>
+    <script>
+        // Initialize the map
+        // Initialize the map
+        const map = L.map('map').setView([12.97, 77.57], 13); // Centered on Bangalore
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let markers = [];
+        let isochrones = [];
+        let tempMarker = null;
+        let addingPoint = false;
+
+        // Load existing points and isochrones
+        Promise.all([
+            fetch('/isochrones').then(response => response.json()),
+            fetch('/points').then(response => response.json())
+        ])
+        .then(([isochroneData, pointsData]) => {
+            console.log('Loaded isochrones:', isochroneData);
+            console.log('Loaded points:', pointsData);
+            
+            // Add isochrone data
+            isochroneData.forEach(point => {
+                // Add marker
+                const marker = L.marker([point.latitude, point.longitude])
+                    .bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
+                markers.push(marker);
+                marker.addTo(map);
+
+                // Add isochrone if it exists
+                if (point.isochrone) {
+                    const isochroneLayer = L.geoJSON(point.isochrone, {
+                        style: (feature) => ({
+                            fillColor: feature.properties.fillColor || '#ff0000',
+                            fillOpacity: 0.5,
+                            color: feature.properties.color || '#ff0000',
+                            weight: 2,
+                            opacity: 0.5
+                        })
+                    });
+                    isochrones.push(isochroneLayer);
+                    isochroneLayer.addTo(map);
+                    
+                    // Bind popup to isochrone
+                    isochroneLayer.bindPopup(`Isochrone for point at ${new Date(point.timestamp).toLocaleString()}`);
+                }
+            });
+
+            // Add any additional points from geo_points.json that aren't in isochrones.json
+            pointsData.forEach(point => {
+                // Check if point already exists (by comparing coordinates)
+                const exists = markers.some(marker => 
+                    marker.getLatLng().lat === point.latitude && 
+                    marker.getLatLng().lng === point.longitude
+                );
+
+                if (!exists) {
+                    const marker = L.marker([point.latitude, point.longitude])
+                        .bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
+                    markers.push(marker);
+                    marker.addTo(map);
+                }
+            });
+
+            // If we have any points, fit the map to show all of them
+            if (markers.length > 0) {
+                const group = new L.featureGroup(markers);
+                map.fitBounds(group.getBounds());
+            }
+        })
+        .catch(error => {
+            console.error('Error loading data:', error);
+            alert('Error loading map data. Some features may not be displayed.');
+        });
+        // UI Elements
+        const addPointBtn = document.getElementById('addPointBtn');
+        const instructions = document.getElementById('instructions');
+        const pointForm = document.getElementById('pointForm');
+        const timestampInput = document.getElementById('timestamp');
+        const savePointBtn = document.getElementById('savePointBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
+
+        // Event Handlers
+        addPointBtn.addEventListener('click', () => {
+            addingPoint = true;
+            addPointBtn.style.display = 'none';
+            instructions.style.display = 'inline';
+            pointForm.style.display = 'none';
+            
+            // Set current timestamp as default
+            const now = new Date();
+            now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+            timestampInput.value = now.toISOString().slice(0, 16);
+        });
+
+        map.on('click', (e) => {
+            if (!addingPoint) return;
+
+            if (tempMarker) {
+                map.removeLayer(tempMarker);
+            }
+
+            tempMarker = L.marker(e.latlng).addTo(map);
+            instructions.style.display = 'none';
+            pointForm.style.display = 'block';
+        });
+
+        savePointBtn.addEventListener('click', () => {
+            if (!tempMarker || !timestampInput.value) {
+                alert('Please select a location and timestamp');
+                return;
+            }
+
+            const point = {
+                latitude: tempMarker.getLatLng().lat,
+                longitude: tempMarker.getLatLng().lng,
+                timestamp: new Date(timestampInput.value).toISOString()
+            };
+
+            fetch('../points', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(point)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Success:', data);
+                tempMarker.bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
+                markers.push(tempMarker);
+                resetAddPointState();
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to save point. Please try again.');
+                if (tempMarker) {
+                    map.removeLayer(tempMarker);
+                }
+                resetAddPointState();
+            });
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            if (tempMarker) {
+                map.removeLayer(tempMarker);
+            }
+            resetAddPointState();
+        });
+
+        function resetAddPointState() {
+            addingPoint = false;
+            tempMarker = null;
+            addPointBtn.style.display = 'block';
+            instructions.style.display = 'none';
+            pointForm.style.display = 'none';
+        }
+    </script>
+</body>
+</html>
