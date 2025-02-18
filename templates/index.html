@@ -14,79 +14,191 @@
             background: #f5f5f5;
             border-radius: 5px;
         }
+        .legend {
+            padding: 6px 8px;
+            background: white;
+            background: rgba(255,255,255,0.9);
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            border-radius: 5px;
+        }
+        .risk-cursor {
+            pointer-events: none;
+            border-radius: 0%;
+            border: none;
+            box-shadow: 0 0 15px rgba(0,0,0,0.3);
+            filter: blur(8px);
+            transition: background-color 0.2s ease;
+        }
+        .isochrone-layer {
+            mix-blend-mode: multiply;
+        }
     </style>
 </head>
 <body>
     <div class="control-panel">
         <button id="addPointBtn">Add New Point</button>
-        <span id="instructions" style="display: none;">
-            Click on the map to place a point, then click OK to save
-        </span>
+        <span id="instructions" style="display: none;">Click on the map to place a point</span>
         <div id="pointForm" style="display: none;">
             <input type="datetime-local" id="timestamp" required>
-            <button id="savePointBtn">OK</button>
+            <button id="savePointBtn">Save</button>
             <button id="cancelBtn">Cancel</button>
+        </div>
+        <div>
+            <label><input type="checkbox" id="togglePoints" checked> Show Points</label>
+            <label><input type="checkbox" id="toggleIsochrones" checked> Show Isochrones</label>
+            <label><input type="checkbox" id="toggleRisk" checked> Show Risk Overview</label>
         </div>
     </div>
     
     <div id="map"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
     <script>
-        // Initialize the map
-        // Initialize the map
-        const map = L.map('map').setView([12.97, 77.57], 13); // Centered on Bangalore
+        const map = L.map('map').setView([12.97, 77.57], 13);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
         let markers = [];
         let isochrones = [];
+        let riskCursor = null;
         let tempMarker = null;
         let addingPoint = false;
+        let showRisk = true;
 
-        // Load existing points and isochrones
+        function createRiskCursor() {
+            const cursorSize = 40;
+            const cursorIcon = L.divIcon({
+                className: 'risk-cursor',
+                iconSize: [cursorSize, cursorSize]
+            });
+            riskCursor = L.marker([0, 0], {
+                icon: cursorIcon,
+                interactive: false
+            });
+        }
+        createRiskCursor();
+
+        function calculateRisk(overlaps) {
+            return (0.2 * overlaps) + ((overlaps - 1) / 10);
+        }
+
+        const legend = L.control({ position: 'bottomright' });
+        legend.onAdd = function(map) {
+            const div = L.DomUtil.create('div', 'legend');
+            div.innerHTML = `
+                <h4>Risk Levels</h4>
+                <div><span style="background: #FFA500">&nbsp;&nbsp;&nbsp;&nbsp;</span> Moderate (0-0.5)</div>
+                <div><span style="background: #FF4500">&nbsp;&nbsp;&nbsp;&nbsp;</span> High (0.5-1.0)</div>
+                <div><span style="background: #8B0000">&nbsp;&nbsp;&nbsp;&nbsp;</span> Severe (>1.0)</div>
+            `;
+            return div;
+        };
+        legend.addTo(map);
+
+        function assessRiskAtPoint(latlng) {
+            const point = turf.point([latlng.lng, latlng.lat]);
+            let overlaps = 0;
+
+            isochrones.forEach(iso => {
+                const isoGeoJSON = iso.toGeoJSON();
+                isoGeoJSON.features.forEach(feature => {
+                    if (turf.booleanPointInPolygon(point, feature.geometry)) {
+                        overlaps++;
+                    }
+                });
+            });
+
+            return overlaps > 0 ? calculateRisk(overlaps) : 0;
+        }
+
+        map.on('mousemove', (e) => {
+            if (!showRisk) {
+                if (map.hasLayer(riskCursor)) {
+                    map.removeLayer(riskCursor);
+                }
+                return;
+            }
+
+            const risk = assessRiskAtPoint(e.latlng);
+            
+            if (risk > 0) {
+                riskCursor.setLatLng(e.latlng);
+                if (!map.hasLayer(riskCursor)) {
+                    riskCursor.addTo(map);
+                }
+                
+                const cursorElement = riskCursor.getElement();
+                if (cursorElement) {
+                    cursorElement.style.backgroundColor = getRiskColor(risk);
+                    cursorElement.style.opacity = '0.7';
+                }
+
+                const category = getRiskCategory(risk);
+                riskCursor.bindPopup(`
+                    Risk Level: ${risk.toFixed(2)}<br>
+                    Category: ${category}
+                `).openPopup();
+            } else {
+                if (map.hasLayer(riskCursor)) {
+                    map.removeLayer(riskCursor);
+                }
+            }
+        });
+
+        function getRiskColor(risk) {
+            if (risk > 1) return '#8B0000';
+            if (risk > 0.5) return '#FF4500';
+            return '#FFA500';
+        }
+
+        function getRiskCategory(risk) {
+            if (risk > 1) return 'Severe Risk';
+            if (risk > 0.5) return 'High Risk';
+            return 'Moderate Risk';
+        }
+
+        document.getElementById('toggleRisk').addEventListener('change', (e) => {
+            showRisk = e.target.checked;
+            if (!showRisk && map.hasLayer(riskCursor)) {
+                map.removeLayer(riskCursor);
+            }
+        });
+
         Promise.all([
-            fetch('/isochrones').then(response => response.json()),
-            fetch('/points').then(response => response.json())
+            fetch('/isochrones').then(res => res.json()),
+            fetch('/points').then(res => res.json())
         ])
         .then(([isochroneData, pointsData]) => {
-            console.log('Loaded isochrones:', isochroneData);
-            console.log('Loaded points:', pointsData);
+            const isochroneGroup = L.featureGroup().addTo(map);
             
-            // Add isochrone data
             isochroneData.forEach(point => {
-                // Add marker
                 const marker = L.marker([point.latitude, point.longitude])
                     .bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
                 markers.push(marker);
                 marker.addTo(map);
 
-                // Add isochrone if it exists
                 if (point.isochrone) {
                     const isochroneLayer = L.geoJSON(point.isochrone, {
                         style: (feature) => ({
-                            fillColor: feature.properties.fillColor || '#ff0000',
-                            fillOpacity: 0.5,
-                            color: feature.properties.color || '#ff0000',
+                            fillColor: '#ff0000',
+                            fillOpacity: 0.2,
+                            color: '#ff0000',
                             weight: 2,
-                            opacity: 0.5
-                        })
+                            className: 'isochrone-layer'
+                        }),
+                        interactive: false
                     });
                     isochrones.push(isochroneLayer);
-                    isochroneLayer.addTo(map);
-                    
-                    // Bind popup to isochrone
-                    isochroneLayer.bindPopup(`Isochrone for point at ${new Date(point.timestamp).toLocaleString()}`);
+                    isochroneLayer.addTo(isochroneGroup);
                 }
             });
 
-            // Add any additional points from geo_points.json that aren't in isochrones.json
             pointsData.forEach(point => {
-                // Check if point already exists (by comparing coordinates)
-                const exists = markers.some(marker => 
-                    marker.getLatLng().lat === point.latitude && 
-                    marker.getLatLng().lng === point.longitude
+                const exists = markers.some(m => 
+                    m.getLatLng().lat === point.latitude && 
+                    m.getLatLng().lng === point.longitude
                 );
 
                 if (!exists) {
@@ -97,103 +209,91 @@
                 }
             });
 
-            // If we have any points, fit the map to show all of them
             if (markers.length > 0) {
-                const group = new L.featureGroup(markers);
-                map.fitBounds(group.getBounds());
+                map.fitBounds(L.featureGroup(markers).getBounds());
             }
         })
         .catch(error => {
             console.error('Error loading data:', error);
-            alert('Error loading map data. Some features may not be displayed.');
+            alert('Error loading map data');
         });
-        // UI Elements
-        const addPointBtn = document.getElementById('addPointBtn');
-        const instructions = document.getElementById('instructions');
-        const pointForm = document.getElementById('pointForm');
-        const timestampInput = document.getElementById('timestamp');
-        const savePointBtn = document.getElementById('savePointBtn');
-        const cancelBtn = document.getElementById('cancelBtn');
 
-        // Event Handlers
-        addPointBtn.addEventListener('click', () => {
+        document.getElementById('addPointBtn').addEventListener('click', () => {
             addingPoint = true;
-            addPointBtn.style.display = 'none';
-            instructions.style.display = 'inline';
-            pointForm.style.display = 'none';
+            document.getElementById('addPointBtn').style.display = 'none';
+            document.getElementById('instructions').style.display = 'inline';
+            document.getElementById('pointForm').style.display = 'none';
             
-            // Set current timestamp as default
             const now = new Date();
             now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-            timestampInput.value = now.toISOString().slice(0, 16);
+            document.getElementById('timestamp').value = now.toISOString().slice(0, 16);
         });
 
         map.on('click', (e) => {
             if (!addingPoint) return;
-
-            if (tempMarker) {
-                map.removeLayer(tempMarker);
-            }
-
+            if (tempMarker) map.removeLayer(tempMarker);
             tempMarker = L.marker(e.latlng).addTo(map);
-            instructions.style.display = 'none';
-            pointForm.style.display = 'block';
+            document.getElementById('instructions').style.display = 'none';
+            document.getElementById('pointForm').style.display = 'block';
         });
 
-        savePointBtn.addEventListener('click', () => {
-            if (!tempMarker || !timestampInput.value) {
-                alert('Please select a location and timestamp');
+        document.getElementById('togglePoints').addEventListener('change', (e) => {
+            markers.forEach(marker => {
+                if (e.target.checked) map.addLayer(marker);
+                else map.removeLayer(marker);
+            });
+        });
+
+        document.getElementById('toggleIsochrones').addEventListener('change', (e) => {
+            isochrones.forEach(iso => {
+                if (e.target.checked) map.addLayer(iso);
+                else map.removeLayer(iso);
+            });
+        });
+
+        function savePoint() {
+            if (!tempMarker || !document.getElementById('timestamp').value) {
+                alert('Please select location and timestamp');
                 return;
             }
 
             const point = {
                 latitude: tempMarker.getLatLng().lat,
                 longitude: tempMarker.getLatLng().lng,
-                timestamp: new Date(timestampInput.value).toISOString()
+                timestamp: new Date(document.getElementById('timestamp').value).toISOString()
             };
 
-            fetch('../points', {
+            fetch('/points', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(point)
             })
             .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
+                if (!response.ok) throw new Error('Network response was not ok');
                 return response.json();
             })
             .then(data => {
-                console.log('Success:', data);
                 tempMarker.bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
                 markers.push(tempMarker);
                 resetAddPointState();
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('Failed to save point. Please try again.');
-                if (tempMarker) {
-                    map.removeLayer(tempMarker);
-                }
+                alert('Failed to save point');
+                if (tempMarker) map.removeLayer(tempMarker);
                 resetAddPointState();
             });
-        });
+        }
 
-        cancelBtn.addEventListener('click', () => {
-            if (tempMarker) {
-                map.removeLayer(tempMarker);
-            }
-            resetAddPointState();
-        });
+        document.getElementById('savePointBtn').addEventListener('click', savePoint);
+        document.getElementById('cancelBtn').addEventListener('click', resetAddPointState);
 
         function resetAddPointState() {
             addingPoint = false;
             tempMarker = null;
-            addPointBtn.style.display = 'block';
-            instructions.style.display = 'none';
-            pointForm.style.display = 'none';
+            document.getElementById('addPointBtn').style.display = 'block';
+            document.getElementById('instructions').style.display = 'none';
+            document.getElementById('pointForm').style.display = 'none';
         }
     </script>
 </body>
