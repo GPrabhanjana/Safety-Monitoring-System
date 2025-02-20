@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Geo Points and Isochrones Mapper</title>
+    <title>Geo Points, Isochrones, and Clusters Mapper</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css" />
     <style>
         #map {
@@ -32,6 +32,10 @@
         .isochrone-layer {
             mix-blend-mode: multiply;
         }
+        .cluster-circle {
+            stroke: #fff;
+            stroke-width: 2;
+        }
     </style>
 </head>
 <body>
@@ -47,6 +51,7 @@
             <label><input type="checkbox" id="togglePoints" checked> Show Points</label>
             <label><input type="checkbox" id="toggleIsochrones" checked> Show Isochrones</label>
             <label><input type="checkbox" id="toggleRisk" checked> Show Risk Overview</label>
+            <label><input type="checkbox" id="toggleClusters" checked> Show Clusters</label>
         </div>
     </div>
     
@@ -55,37 +60,39 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
     <script>
+        // Initialize map and base layers
+// Initialize map and base layers
         const map = L.map('map').setView([12.97, 77.57], 13);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
+        // Initialize global variables
         let markers = [];
         let isochrones = [];
+        let clusterLayers = [];
         let riskCursor = null;
         let tempMarker = null;
         let addingPoint = false;
         let showRisk = true;
 
-        function createRiskCursor() {
-            const cursorSize = 40;
-            const cursorIcon = L.divIcon({
-                className: 'risk-cursor',
-                iconSize: [cursorSize, cursorSize]
-            });
-            riskCursor = L.marker([0, 0], {
-                icon: cursorIcon,
-                interactive: false
-            });
-        }
-        createRiskCursor();
+        // Create cluster legend
+        const clusterLegend = L.control({ position: 'bottomleft' });
+        clusterLegend.onAdd = function(map) {
+            const div = L.DomUtil.create('div', 'legend');
+            div.innerHTML = `
+                <h4>Cluster Information</h4>
+                <div><span style="background: #4169E1">&nbsp;&nbsp;&nbsp;&nbsp;</span> Low Density</div>
+                <div><span style="background: #1E90FF">&nbsp;&nbsp;&nbsp;&nbsp;</span> Medium Density</div>
+                <div><span style="background: #00BFFF">&nbsp;&nbsp;&nbsp;&nbsp;</span> High Density</div>
+            `;
+            return div;
+        };
+        clusterLegend.addTo(map);
 
-        function calculateRisk(overlaps) {
-            return (0.2 * overlaps) + ((overlaps - 1) / 10);
-        }
-
-        const legend = L.control({ position: 'bottomright' });
-        legend.onAdd = function(map) {
+        // Create risk legend
+        const riskLegend = L.control({ position: 'bottomright' });
+        riskLegend.onAdd = function(map) {
             const div = L.DomUtil.create('div', 'legend');
             div.innerHTML = `
                 <h4>Risk Levels</h4>
@@ -95,7 +102,30 @@
             `;
             return div;
         };
-        legend.addTo(map);
+        riskLegend.addTo(map);
+
+        function getClusterColor(density) {
+            if (density > 0.2) return '#00BFFF';
+            if (density > 0.15) return '#1E90FF';
+            return '#4169E1';
+        }
+
+        // Risk assessment functions
+        function calculateRisk(overlaps) {
+            return (0.2 * overlaps) + ((overlaps - 1) / 10);
+        }
+
+        function getRiskColor(risk) {
+            if (risk > 1) return '#8B0000';
+            if (risk > 0.5) return '#FF4500';
+            return '#FFA500';
+        }
+
+        function getRiskCategory(risk) {
+            if (risk > 1) return 'Severe Risk';
+            if (risk > 0.5) return 'High Risk';
+            return 'Moderate Risk';
+        }
 
         function assessRiskAtPoint(latlng) {
             const point = turf.point([latlng.lng, latlng.lat]);
@@ -113,6 +143,22 @@
             return overlaps > 0 ? calculateRisk(overlaps) : 0;
         }
 
+        function createRiskCursor() {
+            const cursorSize = 40;
+            const cursorIcon = L.divIcon({
+                className: 'risk-cursor',
+                iconSize: [cursorSize, cursorSize]
+            });
+            riskCursor = L.marker([0, 0], {
+                icon: cursorIcon,
+                interactive: false
+            });
+        }
+
+        // Initialize risk cursor
+        createRiskCursor();
+
+        // Set up risk mousemove handler
         map.on('mousemove', (e) => {
             if (!showRisk) {
                 if (map.hasLayer(riskCursor)) {
@@ -147,17 +193,146 @@
             }
         });
 
-        function getRiskColor(risk) {
-            if (risk > 1) return '#8B0000';
-            if (risk > 0.5) return '#FF4500';
-            return '#FFA500';
+        function createClusterVisualization(clusterData) {
+            // Clear existing cluster layers
+            clusterLayers.forEach(layer => map.removeLayer(layer));
+            clusterLayers = [];
+
+            if (!clusterData || !clusterData.clusters) {
+                console.warn('No cluster data available');
+                return;
+            }
+
+            clusterData.clusters.forEach(cluster => {
+                try {
+                    // Create circle for cluster center
+                    const center = L.circle(
+                        [cluster.center.latitude, cluster.center.longitude],
+                        {
+                            color: getClusterColor(cluster.statistics.density),
+                            fillColor: getClusterColor(cluster.statistics.density),
+                            fillOpacity: 0.3,
+                            radius: cluster.statistics.size * 50,
+                            className: 'cluster-circle'
+                        }
+                    );
+
+                    // Create bounds rectangle
+                    const bounds = L.rectangle(
+                        [
+                            [cluster.bounds.lat_min, cluster.bounds.lon_min],
+                            [cluster.bounds.lat_max, cluster.bounds.lon_max]
+                        ],
+                        {
+                            color: getClusterColor(cluster.statistics.density),
+                            weight: 2,
+                            fillOpacity: 0.1
+                        }
+                    );
+
+                    // Add popup with cluster information
+                    const popupContent = `
+                        <strong>Cluster ${cluster.cluster_id}</strong><br>
+                        Size: ${cluster.statistics.size} points<br>
+                        Density: ${cluster.statistics.density.toFixed(3)}<br>
+                        Peak Hour: ${cluster.statistics.peak_hour}:00<br>
+                        Lat Std: ${cluster.statistics.lat_std.toFixed(4)}<br>
+                        Lon Std: ${cluster.statistics.lon_std.toFixed(4)}
+                    `;
+                    center.bindPopup(popupContent);
+                    bounds.bindPopup(popupContent);
+
+                    clusterLayers.push(center);
+                    clusterLayers.push(bounds);
+                    
+                    center.addTo(map);
+                    bounds.addTo(map);
+                } catch (error) {
+                    console.error('Error creating cluster visualization:', error);
+                }
+            });
         }
 
-        function getRiskCategory(risk) {
-            if (risk > 1) return 'Severe Risk';
-            if (risk > 0.5) return 'High Risk';
-            return 'Moderate Risk';
+        // Load data and initialize map features
+        async function loadMapData() {
+            try {
+                const [isochroneResponse, pointsResponse, clusterResponse] = await Promise.all([
+                    fetch('/isochrones'),
+                    fetch('/points'),
+                    fetch('/clusters')
+                ]);
+
+                if (!isochroneResponse.ok) throw new Error('Failed to load isochrones');
+                if (!pointsResponse.ok) throw new Error('Failed to load points');
+                if (!clusterResponse.ok) throw new Error('Failed to load clusters');
+
+                const isochroneData = await isochroneResponse.json();
+                const pointsData = await pointsResponse.json();
+                const clusterData = await clusterResponse.json();
+
+                // Process isochrones and points
+                const isochroneGroup = L.featureGroup().addTo(map);
+                
+                isochroneData.forEach(point => {
+                    const marker = L.marker([point.latitude, point.longitude])
+                        .bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
+                    markers.push(marker);
+                    marker.addTo(map);
+
+                    if (point.isochrone) {
+                        const isochroneLayer = L.geoJSON(point.isochrone, {
+                            style: (feature) => ({
+                                fillColor: '#ff0000',
+                                fillOpacity: 0.2,
+                                color: '#ff0000',
+                                weight: 2,
+                                className: 'isochrone-layer'
+                            }),
+                            interactive: false
+                        });
+                        isochrones.push(isochroneLayer);
+                        isochroneLayer.addTo(isochroneGroup);
+                    }
+                });
+
+                // Add additional points
+                pointsData.forEach(point => {
+                    const exists = markers.some(m => 
+                        m.getLatLng().lat === point.latitude && 
+                        m.getLatLng().lng === point.longitude
+                    );
+
+                    if (!exists) {
+                        const marker = L.marker([point.latitude, point.longitude])
+                            .bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
+                        markers.push(marker);
+                        marker.addTo(map);
+                    }
+                });
+
+                // Create cluster visualization
+                createClusterVisualization(clusterData);
+
+                // Fit map bounds if there are markers
+                if (markers.length > 0) {
+                    map.fitBounds(L.featureGroup(markers).getBounds());
+                }
+            } catch (error) {
+                console.error('Error loading map data:', error);
+                alert(`Error loading map data: ${error.message}`);
+            }
         }
+
+        // Initialize map data
+        loadMapData();
+
+        // Set up event listeners
+        document.getElementById('toggleClusters').addEventListener('change', (e) => {
+            clusterLayers.forEach(layer => {
+                if (e.target.checked) map.addLayer(layer);
+                else map.removeLayer(layer);
+            });
+        });
 
         document.getElementById('toggleRisk').addEventListener('change', (e) => {
             showRisk = e.target.checked;
@@ -166,58 +341,7 @@
             }
         });
 
-        Promise.all([
-            fetch('/isochrones').then(res => res.json()),
-            fetch('/points').then(res => res.json())
-        ])
-        .then(([isochroneData, pointsData]) => {
-            const isochroneGroup = L.featureGroup().addTo(map);
-            
-            isochroneData.forEach(point => {
-                const marker = L.marker([point.latitude, point.longitude])
-                    .bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
-                markers.push(marker);
-                marker.addTo(map);
-
-                if (point.isochrone) {
-                    const isochroneLayer = L.geoJSON(point.isochrone, {
-                        style: (feature) => ({
-                            fillColor: '#ff0000',
-                            fillOpacity: 0.2,
-                            color: '#ff0000',
-                            weight: 2,
-                            className: 'isochrone-layer'
-                        }),
-                        interactive: false
-                    });
-                    isochrones.push(isochroneLayer);
-                    isochroneLayer.addTo(isochroneGroup);
-                }
-            });
-
-            pointsData.forEach(point => {
-                const exists = markers.some(m => 
-                    m.getLatLng().lat === point.latitude && 
-                    m.getLatLng().lng === point.longitude
-                );
-
-                if (!exists) {
-                    const marker = L.marker([point.latitude, point.longitude])
-                        .bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
-                    markers.push(marker);
-                    marker.addTo(map);
-                }
-            });
-
-            if (markers.length > 0) {
-                map.fitBounds(L.featureGroup(markers).getBounds());
-            }
-        })
-        .catch(error => {
-            console.error('Error loading data:', error);
-            alert('Error loading map data');
-        });
-
+        // Add point functionality
         document.getElementById('addPointBtn').addEventListener('click', () => {
             addingPoint = true;
             document.getElementById('addPointBtn').style.display = 'none';
@@ -229,14 +353,43 @@
             document.getElementById('timestamp').value = now.toISOString().slice(0, 16);
         });
 
-        map.on('click', (e) => {
-            if (!addingPoint) return;
-            if (tempMarker) map.removeLayer(tempMarker);
-            tempMarker = L.marker(e.latlng).addTo(map);
-            document.getElementById('instructions').style.display = 'none';
-            document.getElementById('pointForm').style.display = 'block';
-        });
+        // Save point functionality
+        async function savePoint() {
+            if (!tempMarker || !document.getElementById('timestamp').value) {
+                alert('Please select location and timestamp');
+                return;
+            }
 
+            const point = {
+                latitude: tempMarker.getLatLng().lat,
+                longitude: tempMarker.getLatLng().lng,
+                timestamp: new Date(document.getElementById('timestamp').value).toISOString()
+            };
+
+            try {
+                const response = await fetch('/points', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(point)
+                });
+
+                if (!response.ok) throw new Error('Failed to save point');
+
+                const data = await response.json();
+                tempMarker.bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
+                markers.push(tempMarker);
+                resetAddPointState();
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Failed to save point');
+                if (tempMarker) map.removeLayer(tempMarker);
+                resetAddPointState();
+            }
+        }
+
+        // Add remaining event listeners and helper functions
+        document.getElementById('savePointBtn').addEventListener('click', savePoint);
+        document.getElementById('cancelBtn').addEventListener('click', resetAddPointState);
         document.getElementById('togglePoints').addEventListener('change', (e) => {
             markers.forEach(marker => {
                 if (e.target.checked) map.addLayer(marker);
@@ -251,42 +404,13 @@
             });
         });
 
-        function savePoint() {
-            if (!tempMarker || !document.getElementById('timestamp').value) {
-                alert('Please select location and timestamp');
-                return;
-            }
-
-            const point = {
-                latitude: tempMarker.getLatLng().lat,
-                longitude: tempMarker.getLatLng().lng,
-                timestamp: new Date(document.getElementById('timestamp').value).toISOString()
-            };
-
-            fetch('/points', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(point)
-            })
-            .then(response => {
-                if (!response.ok) throw new Error('Network response was not ok');
-                return response.json();
-            })
-            .then(data => {
-                tempMarker.bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
-                markers.push(tempMarker);
-                resetAddPointState();
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Failed to save point');
-                if (tempMarker) map.removeLayer(tempMarker);
-                resetAddPointState();
-            });
-        }
-
-        document.getElementById('savePointBtn').addEventListener('click', savePoint);
-        document.getElementById('cancelBtn').addEventListener('click', resetAddPointState);
+        map.on('click', (e) => {
+            if (!addingPoint) return;
+            if (tempMarker) map.removeLayer(tempMarker);
+            tempMarker = L.marker(e.latlng).addTo(map);
+            document.getElementById('instructions').style.display = 'none';
+            document.getElementById('pointForm').style.display = 'block';
+        });
 
         function resetAddPointState() {
             addingPoint = false;
