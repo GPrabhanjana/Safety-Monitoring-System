@@ -1,424 +1,423 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Geo Points, Isochrones, and Clusters Mapper</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css" />
-    <style>
-        #map {
-            height: 600px;
-            width: 100%;
-        }
-        .control-panel {
-            margin: 20px 0;
-            padding: 10px;
-            background: #f5f5f5;
-            border-radius: 5px;
-        }
-        .legend {
-            padding: 6px 8px;
-            background: white;
-            background: rgba(255,255,255,0.9);
-            box-shadow: 0 0 15px rgba(0,0,0,0.2);
-            border-radius: 5px;
-        }
-        .risk-cursor {
-            pointer-events: none;
-            border-radius: 0%;
-            border: none;
-            box-shadow: 0 0 15px rgba(0,0,0,0.3);
-            filter: blur(8px);
-            transition: background-color 0.2s ease;
-        }
-        .isochrone-layer {
-            mix-blend-mode: multiply;
-        }
-        .cluster-circle {
-            stroke: #fff;
-            stroke-width: 2;
-        }
-    </style>
-</head>
-<body>
-    <div class="control-panel">
-        <button id="addPointBtn">Add New Point</button>
-        <span id="instructions" style="display: none;">Click on the map to place a point</span>
-        <div id="pointForm" style="display: none;">
-            <input type="datetime-local" id="timestamp" required>
-            <button id="savePointBtn">Save</button>
-            <button id="cancelBtn">Cancel</button>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Geo Points, Isochrones, and Clusters Mapper</title>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.css" />
+        <style>
+            #map {
+                height: 600px;
+                width: 100%;
+            }
+            .control-panel {
+                margin: 20px 0;
+                padding: 10px;
+                background: #f5f5f5;
+                border-radius: 5px;
+            }
+            .legend {
+                padding: 6px 8px;
+                background: white;
+                background: rgba(255,255,255,0.9);
+                box-shadow: 0 0 15px rgba(0,0,0,0.2);
+                border-radius: 5px;
+            }
+            .risk-cursor {
+                pointer-events: none;
+                border-radius: 0%;
+                border: none;
+                box-shadow: 0 0 15px rgba(0,0,0,0.3);
+                filter: blur(8px);
+                transition: background-color 0.2s ease;
+            }
+            .isochrone-layer {
+                mix-blend-mode: multiply;
+            }
+            .cluster-circle {
+                stroke: #fff;
+                stroke-width: 2;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="control-panel">
+            <button id="addPointBtn">Add New Point</button>
+            <span id="instructions" style="display: none;">Click on the map to place a point</span>
+            <div id="pointForm" style="display: none;">
+                <input type="datetime-local" id="timestamp" required>
+                <button id="savePointBtn">Save</button>
+                <button id="cancelBtn">Cancel</button>
+            </div>
+            <div>
+                <label><input type="checkbox" id="togglePoints" checked> Show Points</label>
+                <label><input type="checkbox" id="toggleIsochrones" checked> Show Isochrones</label>
+                <label><input type="checkbox" id="toggleRisk" checked> Show Risk Overview</label>
+                <label><input type="checkbox" id="toggleClusters" checked> Show Clusters</label>
+            </div>
         </div>
-        <div>
-            <label><input type="checkbox" id="togglePoints" checked> Show Points</label>
-            <label><input type="checkbox" id="toggleIsochrones" checked> Show Isochrones</label>
-            <label><input type="checkbox" id="toggleRisk" checked> Show Risk Overview</label>
-            <label><input type="checkbox" id="toggleClusters" checked> Show Clusters</label>
-        </div>
-    </div>
-    
-    <div id="map"></div>
+        
+        <div id="map"></div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
-    <script>
-        // Initialize map and base layers
-// Initialize map and base layers
-        const map = L.map('map').setView([12.97, 77.57], 13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+        <script>
+            // Initialize map and base layers
+            const map = L.map('map').setView([12.97, 77.57], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
 
-        // Initialize global variables
-        let markers = [];
-        let isochrones = [];
-        let clusterLayers = [];
-        let riskCursor = null;
-        let tempMarker = null;
-        let addingPoint = false;
-        let showRisk = true;
+            // Initialize global variables
+            let markers = [];
+            let isochrones = [];
+            let clusterLayers = [];
+            let riskCursor = null;
+            let tempMarker = null;
+            let addingPoint = false;
+            let showRisk = true;
 
-        // Create cluster legend
-        const clusterLegend = L.control({ position: 'bottomleft' });
-        clusterLegend.onAdd = function(map) {
-            const div = L.DomUtil.create('div', 'legend');
-            div.innerHTML = `
-                <h4>Cluster Information</h4>
-                <div><span style="background: #4169E1">&nbsp;&nbsp;&nbsp;&nbsp;</span> Low Density</div>
-                <div><span style="background: #1E90FF">&nbsp;&nbsp;&nbsp;&nbsp;</span> Medium Density</div>
-                <div><span style="background: #00BFFF">&nbsp;&nbsp;&nbsp;&nbsp;</span> High Density</div>
-            `;
-            return div;
-        };
-        clusterLegend.addTo(map);
+            // Create cluster legend
+            const clusterLegend = L.control({ position: 'bottomleft' });
+            clusterLegend.onAdd = function(map) {
+                const div = L.DomUtil.create('div', 'legend');
+                div.innerHTML = `
+                    <h4>Cluster Information</h4>
+                    <div><span style="background: #4169E1">&nbsp;&nbsp;&nbsp;&nbsp;</span> Low Density</div>
+                    <div><span style="background: #1E90FF">&nbsp;&nbsp;&nbsp;&nbsp;</span> Medium Density</div>
+                    <div><span style="background: #00BFFF">&nbsp;&nbsp;&nbsp;&nbsp;</span> High Density</div>
+                `;
+                return div;
+            };
+            clusterLegend.addTo(map);
 
-        // Create risk legend
-        const riskLegend = L.control({ position: 'bottomright' });
-        riskLegend.onAdd = function(map) {
-            const div = L.DomUtil.create('div', 'legend');
-            div.innerHTML = `
-                <h4>Risk Levels</h4>
-                <div><span style="background: #FFA500">&nbsp;&nbsp;&nbsp;&nbsp;</span> Moderate (0-0.5)</div>
-                <div><span style="background: #FF4500">&nbsp;&nbsp;&nbsp;&nbsp;</span> High (0.5-1.0)</div>
-                <div><span style="background: #8B0000">&nbsp;&nbsp;&nbsp;&nbsp;</span> Severe (>1.0)</div>
-            `;
-            return div;
-        };
-        riskLegend.addTo(map);
+            // Create risk legend
+            const riskLegend = L.control({ position: 'bottomright' });
+            riskLegend.onAdd = function(map) {
+                const div = L.DomUtil.create('div', 'legend');
+                div.innerHTML = `
+                    <h4>Risk Levels</h4>
+                    <div><span style="background: #FFA500">&nbsp;&nbsp;&nbsp;&nbsp;</span> Moderate (0-0.5)</div>
+                    <div><span style="background: #FF4500">&nbsp;&nbsp;&nbsp;&nbsp;</span> High (0.5-1.0)</div>
+                    <div><span style="background: #8B0000">&nbsp;&nbsp;&nbsp;&nbsp;</span> Severe (>1.0)</div>
+                `;
+                return div;
+            };
+            riskLegend.addTo(map);
 
-        function getClusterColor(density) {
-            if (density > 0.2) return '#00BFFF';
-            if (density > 0.15) return '#1E90FF';
-            return '#4169E1';
-        }
+            function getClusterColor(density) {
+                if (density > 0.2) return '#00BFFF';
+                if (density > 0.15) return '#1E90FF';
+                return '#4169E1';
+            }
 
-        // Risk assessment functions
-        function calculateRisk(overlaps) {
-            return (0.2 * overlaps) + ((overlaps - 1) / 10);
-        }
+            // Risk assessment functions
+            function calculateRisk(overlaps) {
+                return (0.2 * overlaps) + ((overlaps - 1) / 10);
+            }
 
-        function getRiskColor(risk) {
-            if (risk > 1) return '#8B0000';
-            if (risk > 0.5) return '#FF4500';
-            return '#FFA500';
-        }
+            function getRiskColor(risk) {
+                if (risk > 1) return '#8B0000';
+                if (risk > 0.5) return '#FF4500';
+                return '#FFA500';
+            }
 
-        function getRiskCategory(risk) {
-            if (risk > 1) return 'Severe Risk';
-            if (risk > 0.5) return 'High Risk';
-            return 'Moderate Risk';
-        }
+            function getRiskCategory(risk) {
+                if (risk > 1) return 'Severe Risk';
+                if (risk > 0.5) return 'High Risk';
+                return 'Moderate Risk';
+            }
 
-        function assessRiskAtPoint(latlng) {
-            const point = turf.point([latlng.lng, latlng.lat]);
-            let overlaps = 0;
+            function assessRiskAtPoint(latlng) {
+                const point = turf.point([latlng.lng, latlng.lat]);
+                let overlaps = 0;
 
-            isochrones.forEach(iso => {
-                const isoGeoJSON = iso.toGeoJSON();
-                isoGeoJSON.features.forEach(feature => {
-                    if (turf.booleanPointInPolygon(point, feature.geometry)) {
-                        overlaps++;
-                    }
+                isochrones.forEach(iso => {
+                    const isoGeoJSON = iso.toGeoJSON();
+                    isoGeoJSON.features.forEach(feature => {
+                        if (turf.booleanPointInPolygon(point, feature.geometry)) {
+                            overlaps++;
+                        }
+                    });
                 });
-            });
 
-            return overlaps > 0 ? calculateRisk(overlaps) : 0;
-        }
-
-        function createRiskCursor() {
-            const cursorSize = 40;
-            const cursorIcon = L.divIcon({
-                className: 'risk-cursor',
-                iconSize: [cursorSize, cursorSize]
-            });
-            riskCursor = L.marker([0, 0], {
-                icon: cursorIcon,
-                interactive: false
-            });
-        }
-
-        // Initialize risk cursor
-        createRiskCursor();
-
-        // Set up risk mousemove handler
-        map.on('mousemove', (e) => {
-            if (!showRisk) {
-                if (map.hasLayer(riskCursor)) {
-                    map.removeLayer(riskCursor);
-                }
-                return;
+                return overlaps > 0 ? calculateRisk(overlaps) : 0;
             }
 
-            const risk = assessRiskAtPoint(e.latlng);
-            
-            if (risk > 0) {
-                riskCursor.setLatLng(e.latlng);
-                if (!map.hasLayer(riskCursor)) {
-                    riskCursor.addTo(map);
+            function createRiskCursor() {
+                const cursorSize = 40;
+                const cursorIcon = L.divIcon({
+                    className: 'risk-cursor',
+                    iconSize: [cursorSize, cursorSize]
+                });
+                riskCursor = L.marker([0, 0], {
+                    icon: cursorIcon,
+                    interactive: false
+                });
+            }
+
+            // Initialize risk cursor
+            createRiskCursor();
+
+            // Set up risk mousemove handler
+            map.on('mousemove', (e) => {
+                if (!showRisk) {
+                    if (map.hasLayer(riskCursor)) {
+                        map.removeLayer(riskCursor);
+                    }
+                    return;
                 }
+
+                const risk = assessRiskAtPoint(e.latlng);
                 
-                const cursorElement = riskCursor.getElement();
-                if (cursorElement) {
-                    cursorElement.style.backgroundColor = getRiskColor(risk);
-                    cursorElement.style.opacity = '0.7';
-                }
-
-                const category = getRiskCategory(risk);
-                riskCursor.bindPopup(`
-                    Risk Level: ${risk.toFixed(2)}<br>
-                    Category: ${category}
-                `).openPopup();
-            } else {
-                if (map.hasLayer(riskCursor)) {
-                    map.removeLayer(riskCursor);
-                }
-            }
-        });
-
-        function createClusterVisualization(clusterData) {
-            // Clear existing cluster layers
-            clusterLayers.forEach(layer => map.removeLayer(layer));
-            clusterLayers = [];
-
-            if (!clusterData || !clusterData.clusters) {
-                console.warn('No cluster data available');
-                return;
-            }
-
-            clusterData.clusters.forEach(cluster => {
-                try {
-                    // Create circle for cluster center
-                    const center = L.circle(
-                        [cluster.center.latitude, cluster.center.longitude],
-                        {
-                            color: getClusterColor(cluster.statistics.density),
-                            fillColor: getClusterColor(cluster.statistics.density),
-                            fillOpacity: 0.3,
-                            radius: cluster.statistics.size * 50,
-                            className: 'cluster-circle'
-                        }
-                    );
-
-                    // Create bounds rectangle
-                    const bounds = L.rectangle(
-                        [
-                            [cluster.bounds.lat_min, cluster.bounds.lon_min],
-                            [cluster.bounds.lat_max, cluster.bounds.lon_max]
-                        ],
-                        {
-                            color: getClusterColor(cluster.statistics.density),
-                            weight: 2,
-                            fillOpacity: 0.1
-                        }
-                    );
-
-                    // Add popup with cluster information
-                    const popupContent = `
-                        <strong>Cluster ${cluster.cluster_id}</strong><br>
-                        Size: ${cluster.statistics.size} points<br>
-                        Density: ${cluster.statistics.density.toFixed(3)}<br>
-                        Peak Hour: ${cluster.statistics.peak_hour}:00<br>
-                        Lat Std: ${cluster.statistics.lat_std.toFixed(4)}<br>
-                        Lon Std: ${cluster.statistics.lon_std.toFixed(4)}
-                    `;
-                    center.bindPopup(popupContent);
-                    bounds.bindPopup(popupContent);
-
-                    clusterLayers.push(center);
-                    clusterLayers.push(bounds);
+                if (risk > 0) {
+                    riskCursor.setLatLng(e.latlng);
+                    if (!map.hasLayer(riskCursor)) {
+                        riskCursor.addTo(map);
+                    }
                     
-                    center.addTo(map);
-                    bounds.addTo(map);
-                } catch (error) {
-                    console.error('Error creating cluster visualization:', error);
+                    const cursorElement = riskCursor.getElement();
+                    if (cursorElement) {
+                        cursorElement.style.backgroundColor = getRiskColor(risk);
+                        cursorElement.style.opacity = '0.7';
+                    }
+
+                    const category = getRiskCategory(risk);
+                    riskCursor.bindPopup(`
+                        Risk Level: ${risk.toFixed(2)}<br>
+                        Category: ${category}
+                    `).openPopup();
+                } else {
+                    if (map.hasLayer(riskCursor)) {
+                        map.removeLayer(riskCursor);
+                    }
                 }
             });
-        }
 
-        // Load data and initialize map features
-        async function loadMapData() {
-            try {
-                const [isochroneResponse, pointsResponse, clusterResponse] = await Promise.all([
-                    fetch('/isochrones'),
-                    fetch('/points'),
-                    fetch('/clusters')
-                ]);
+            function createClusterVisualization(clusterData) {
+                // Clear existing cluster layers
+                clusterLayers.forEach(layer => map.removeLayer(layer));
+                clusterLayers = [];
 
-                if (!isochroneResponse.ok) throw new Error('Failed to load isochrones');
-                if (!pointsResponse.ok) throw new Error('Failed to load points');
-                if (!clusterResponse.ok) throw new Error('Failed to load clusters');
+                if (!clusterData || !clusterData.clusters) {
+                    console.warn('No cluster data available');
+                    return;
+                }
 
-                const isochroneData = await isochroneResponse.json();
-                const pointsData = await pointsResponse.json();
-                const clusterData = await clusterResponse.json();
+                clusterData.clusters.forEach(cluster => {
+                    try {
+                        // Create circle for cluster center
+                        const center = L.circle(
+                            [cluster.center.latitude, cluster.center.longitude],
+                            {
+                                color: getClusterColor(cluster.statistics.density),
+                                fillColor: getClusterColor(cluster.statistics.density),
+                                fillOpacity: 0.3,
+                                radius: cluster.statistics.size * 50,
+                                className: 'cluster-circle'
+                            }
+                        );
 
-                // Process isochrones and points
-                const isochroneGroup = L.featureGroup().addTo(map);
-                
-                isochroneData.forEach(point => {
-                    const marker = L.marker([point.latitude, point.longitude])
-                        .bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
-                    markers.push(marker);
-                    marker.addTo(map);
-
-                    if (point.isochrone) {
-                        const isochroneLayer = L.geoJSON(point.isochrone, {
-                            style: (feature) => ({
-                                fillColor: '#ff0000',
-                                fillOpacity: 0.2,
-                                color: '#ff0000',
+                        // Create bounds rectangle
+                        const bounds = L.rectangle(
+                            [
+                                [cluster.bounds.lat_min, cluster.bounds.lon_min],
+                                [cluster.bounds.lat_max, cluster.bounds.lon_max]
+                            ],
+                            {
+                                color: getClusterColor(cluster.statistics.density),
                                 weight: 2,
-                                className: 'isochrone-layer'
-                            }),
-                            interactive: false
-                        });
-                        isochrones.push(isochroneLayer);
-                        isochroneLayer.addTo(isochroneGroup);
+                                fillOpacity: 0.1
+                            }
+                        );
+
+                        // Add popup with cluster information
+                        const popupContent = `
+                            <strong>Cluster ${cluster.cluster_id}</strong><br>
+                            Size: ${cluster.statistics.size} points<br>
+                            Density: ${cluster.statistics.density.toFixed(3)}<br>
+                            Peak Hour: ${cluster.statistics.peak_hour}:00<br>
+                            Lat Std: ${cluster.statistics.lat_std.toFixed(4)}<br>
+                            Lon Std: ${cluster.statistics.lon_std.toFixed(4)}
+                        `;
+                        center.bindPopup(popupContent);
+                        bounds.bindPopup(popupContent);
+
+                        clusterLayers.push(center);
+                        clusterLayers.push(bounds);
+                        
+                        center.addTo(map);
+                        bounds.addTo(map);
+                    } catch (error) {
+                        console.error('Error creating cluster visualization:', error);
                     }
                 });
+            }
 
-                // Add additional points
-                pointsData.forEach(point => {
-                    const exists = markers.some(m => 
-                        m.getLatLng().lat === point.latitude && 
-                        m.getLatLng().lng === point.longitude
-                    );
+            // Load data and initialize map features
+            async function loadMapData() {
+                try {
+                    const [isochroneResponse, pointsResponse, clusterResponse] = await Promise.all([
+                        fetch('/isochrones'),
+                        fetch('/points'),
+                        fetch('/clusters')
+                    ]);
 
-                    if (!exists) {
+                    if (!isochroneResponse.ok) throw new Error('Failed to load isochrones');
+                    if (!pointsResponse.ok) throw new Error('Failed to load points');
+                    if (!clusterResponse.ok) throw new Error('Failed to load clusters');
+
+                    const isochroneData = await isochroneResponse.json();
+                    const pointsData = await pointsResponse.json();
+                    const clusterData = await clusterResponse.json();
+
+                    // Process isochrones and points
+                    const isochroneGroup = L.featureGroup().addTo(map);
+                    
+                    isochroneData.forEach(point => {
                         const marker = L.marker([point.latitude, point.longitude])
                             .bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
                         markers.push(marker);
                         marker.addTo(map);
+
+                        if (point.isochrone) {
+                            const isochroneLayer = L.geoJSON(point.isochrone, {
+                                style: (feature) => ({
+                                    fillColor: '#ff0000',
+                                    fillOpacity: 0.2,
+                                    color: '#ff0000',
+                                    weight: 2,
+                                    className: 'isochrone-layer'
+                                }),
+                                interactive: false
+                            });
+                            isochrones.push(isochroneLayer);
+                            isochroneLayer.addTo(isochroneGroup);
+                        }
+                    });
+
+                    // Add additional points
+                    pointsData.forEach(point => {
+                        const exists = markers.some(m => 
+                            m.getLatLng().lat === point.latitude && 
+                            m.getLatLng().lng === point.longitude
+                        );
+
+                        if (!exists) {
+                            const marker = L.marker([point.latitude, point.longitude])
+                                .bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
+                            markers.push(marker);
+                            marker.addTo(map);
+                        }
+                    });
+
+                    // Create cluster visualization
+                    createClusterVisualization(clusterData);
+
+                    // Fit map bounds if there are markers
+                    if (markers.length > 0) {
+                        map.fitBounds(L.featureGroup(markers).getBounds());
                     }
-                });
-
-                // Create cluster visualization
-                createClusterVisualization(clusterData);
-
-                // Fit map bounds if there are markers
-                if (markers.length > 0) {
-                    map.fitBounds(L.featureGroup(markers).getBounds());
+                } catch (error) {
+                    console.error('Error loading map data:', error);
+                    alert(`Error loading map data: ${error.message}`);
                 }
-            } catch (error) {
-                console.error('Error loading map data:', error);
-                alert(`Error loading map data: ${error.message}`);
-            }
-        }
-
-        // Initialize map data
-        loadMapData();
-
-        // Set up event listeners
-        document.getElementById('toggleClusters').addEventListener('change', (e) => {
-            clusterLayers.forEach(layer => {
-                if (e.target.checked) map.addLayer(layer);
-                else map.removeLayer(layer);
-            });
-        });
-
-        document.getElementById('toggleRisk').addEventListener('change', (e) => {
-            showRisk = e.target.checked;
-            if (!showRisk && map.hasLayer(riskCursor)) {
-                map.removeLayer(riskCursor);
-            }
-        });
-
-        // Add point functionality
-        document.getElementById('addPointBtn').addEventListener('click', () => {
-            addingPoint = true;
-            document.getElementById('addPointBtn').style.display = 'none';
-            document.getElementById('instructions').style.display = 'inline';
-            document.getElementById('pointForm').style.display = 'none';
-            
-            const now = new Date();
-            now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-            document.getElementById('timestamp').value = now.toISOString().slice(0, 16);
-        });
-
-        // Save point functionality
-        async function savePoint() {
-            if (!tempMarker || !document.getElementById('timestamp').value) {
-                alert('Please select location and timestamp');
-                return;
             }
 
-            const point = {
-                latitude: tempMarker.getLatLng().lat,
-                longitude: tempMarker.getLatLng().lng,
-                timestamp: new Date(document.getElementById('timestamp').value).toISOString()
-            };
+            // Initialize map data
+            loadMapData();
 
-            try {
-                const response = await fetch('/points', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(point)
+            // Set up event listeners
+            document.getElementById('toggleClusters').addEventListener('change', (e) => {
+                clusterLayers.forEach(layer => {
+                    if (e.target.checked) map.addLayer(layer);
+                    else map.removeLayer(layer);
                 });
+            });
 
-                if (!response.ok) throw new Error('Failed to save point');
+            document.getElementById('toggleRisk').addEventListener('change', (e) => {
+                showRisk = e.target.checked;
+                if (!showRisk && map.hasLayer(riskCursor)) {
+                    map.removeLayer(riskCursor);
+                }
+            });
 
-                const data = await response.json();
-                tempMarker.bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
-                markers.push(tempMarker);
-                resetAddPointState();
-            } catch (error) {
-                console.error('Error:', error);
-                alert('Failed to save point');
-                if (tempMarker) map.removeLayer(tempMarker);
-                resetAddPointState();
+            // Add point functionality
+            document.getElementById('addPointBtn').addEventListener('click', () => {
+                addingPoint = true;
+                document.getElementById('addPointBtn').style.display = 'none';
+                document.getElementById('instructions').style.display = 'inline';
+                document.getElementById('pointForm').style.display = 'none';
+                
+                const now = new Date();
+                now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+                document.getElementById('timestamp').value = now.toISOString().slice(0, 16);
+            });
+
+            // Save point functionality
+            async function savePoint() {
+                if (!tempMarker || !document.getElementById('timestamp').value) {
+                    alert('Please select location and timestamp');
+                    return;
+                }
+
+                const point = {
+                    latitude: tempMarker.getLatLng().lat,
+                    longitude: tempMarker.getLatLng().lng,
+                    timestamp: new Date(document.getElementById('timestamp').value).toISOString()
+                };
+
+                try {
+                    const response = await fetch('/points', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(point)
+                    });
+
+                    if (!response.ok) throw new Error('Failed to save point');
+
+                    const data = await response.json();
+                    tempMarker.bindPopup(`Time: ${new Date(point.timestamp).toLocaleString()}`);
+                    markers.push(tempMarker);
+                    resetAddPointState();
+                } catch (error) {
+                    console.error('Error:', error);
+                    alert('Failed to save point');
+                    if (tempMarker) map.removeLayer(tempMarker);
+                    resetAddPointState();
+                }
             }
-        }
 
-        // Add remaining event listeners and helper functions
-        document.getElementById('savePointBtn').addEventListener('click', savePoint);
-        document.getElementById('cancelBtn').addEventListener('click', resetAddPointState);
-        document.getElementById('togglePoints').addEventListener('change', (e) => {
-            markers.forEach(marker => {
-                if (e.target.checked) map.addLayer(marker);
-                else map.removeLayer(marker);
+            // Add remaining event listeners and helper functions
+            document.getElementById('savePointBtn').addEventListener('click', savePoint);
+            document.getElementById('cancelBtn').addEventListener('click', resetAddPointState);
+            document.getElementById('togglePoints').addEventListener('change', (e) => {
+                markers.forEach(marker => {
+                    if (e.target.checked) map.addLayer(marker);
+                    else map.removeLayer(marker);
+                });
             });
-        });
 
-        document.getElementById('toggleIsochrones').addEventListener('change', (e) => {
-            isochrones.forEach(iso => {
-                if (e.target.checked) map.addLayer(iso);
-                else map.removeLayer(iso);
+            document.getElementById('toggleIsochrones').addEventListener('change', (e) => {
+                isochrones.forEach(iso => {
+                    if (e.target.checked) map.addLayer(iso);
+                    else map.removeLayer(iso);
+                });
             });
-        });
 
-        map.on('click', (e) => {
-            if (!addingPoint) return;
-            if (tempMarker) map.removeLayer(tempMarker);
-            tempMarker = L.marker(e.latlng).addTo(map);
-            document.getElementById('instructions').style.display = 'none';
-            document.getElementById('pointForm').style.display = 'block';
-        });
+            map.on('click', (e) => {
+                if (!addingPoint) return;
+                if (tempMarker) map.removeLayer(tempMarker);
+                tempMarker = L.marker(e.latlng).addTo(map);
+                document.getElementById('instructions').style.display = 'none';
+                document.getElementById('pointForm').style.display = 'block';
+            });
 
-        function resetAddPointState() {
-            addingPoint = false;
-            tempMarker = null;
-            document.getElementById('addPointBtn').style.display = 'block';
-            document.getElementById('instructions').style.display = 'none';
-            document.getElementById('pointForm').style.display = 'none';
-        }
-    </script>
-</body>
-</html>
+            function resetAddPointState() {
+                addingPoint = false;
+                tempMarker = null;
+                document.getElementById('addPointBtn').style.display = 'block';
+                document.getElementById('instructions').style.display = 'none';
+                document.getElementById('pointForm').style.display = 'none';
+            }
+        </script>
+    </body>
+    </html>
