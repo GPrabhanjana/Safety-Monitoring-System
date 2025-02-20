@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 # File paths for storing data
 GEO_DATA_FILE = 'geo_points.json'
 ISOCHRONES_FILE = 'isochrones.json'
+CLUSTERS_FILE = 'cluster_analysis.json'
 
 def ensure_file_exists(filepath, default_content=None):
     """Ensure that a JSON file exists; if not, create it with default content."""
@@ -48,6 +49,7 @@ def write_json_file(filepath, data):
 # Ensure required data files exist
 ensure_file_exists(GEO_DATA_FILE)
 ensure_file_exists(ISOCHRONES_FILE)
+ensure_file_exists(CLUSTERS_FILE, {"clusters": [], "global_statistics": {}})
 
 @app.route('/')
 def index():
@@ -87,6 +89,33 @@ def get_isochrones():
     except Exception as e:
         logger.error(f"Error fetching isochrones: {str(e)}")
         return jsonify({'error': 'Failed to fetch isochrones'}), 500
+
+@app.route('/clusters', methods=['GET'])
+def get_clusters():
+    try:
+        clusters = read_json_file(CLUSTERS_FILE)
+        return jsonify(clusters)
+    except Exception as e:
+        logger.error(f"Error fetching clusters: {str(e)}")
+        return jsonify({'error': 'Failed to fetch clusters'}), 500
+
+@app.route('/clusters', methods=['POST'])
+def update_clusters():
+    try:
+        new_clusters = request.json
+        if not isinstance(new_clusters, dict) or 'clusters' not in new_clusters:
+            return jsonify({'error': 'Invalid cluster data format'}), 400
+        
+        # Update timestamp if not provided
+        if 'global_statistics' in new_clusters and 'timestamp' not in new_clusters['global_statistics']:
+            new_clusters['global_statistics']['timestamp'] = datetime.now().isoformat()
+        
+        if write_json_file(CLUSTERS_FILE, new_clusters):
+            return jsonify({'message': 'Clusters updated successfully'})
+        return jsonify({'error': 'Failed to save clusters'}), 500
+    except Exception as e:
+        logger.error(f"Error updating clusters: {str(e)}")
+        return jsonify({'error': 'Failed to update clusters'}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
