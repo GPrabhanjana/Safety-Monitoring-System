@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score, calinski_harabasz_score
 import json
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -24,36 +25,96 @@ class CrimeClusterAnalyzer:
         self.data = df
         return df
 
-    def determine_optimal_clusters(self, max_k=10):
-        """Determine optimal number of clusters using the Elbow Method if kval=0"""
+
+    def determine_optimal_clusters(self, max_k=None):
+        """
+        Determine optimal number of clusters using multiple criteria and plot results.
+        """
+        scaled_features = self.prepare_features()
+        n_samples = len(self.data)
+        
         if self.kval > 0:
             print(f"Using manually set {self.kval} clusters.")
             self.n_clusters = self.kval
             return
 
-        scaled_features = self.prepare_features()
-        distortions = []
+        lat_range = self.data['latitude'].max() - self.data['latitude'].min()
+        lon_range = self.data['longitude'].max() - self.data['longitude'].min()
+        
+        R = 6371  # Earth's radius in km
+        avg_lat = self.data['latitude'].mean()
+        area = (lat_range * R) * (lon_range * R * np.cos(np.radians(avg_lat)))
+        
+        density = n_samples / area if area > 0 else n_samples
+        min_k = max(3, int(np.sqrt(n_samples / 3)))  # Ensure at least 3 clusters
+        
+        if max_k is None:
+            max_k = min(int(np.sqrt(n_samples)), int(area * 3))  # Higher range to explore
+        
+        max_k = min(max_k, n_samples - 1)
+        if max_k <= min_k:
+            min_k = 3
+            max_k = min(15, n_samples - 1)
 
-        # Try clustering with k from 2 to max_k
-        K_range = range(2, min(max_k, len(self.data)) + 1)
-        for k in K_range:
-            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-            kmeans.fit(scaled_features)
-            distortions.append(kmeans.inertia_)
+        if min_k >= n_samples or max_k < 3:
+            print("Warning: Not enough data points for meaningful clustering")
+            self.n_clusters = min(3, n_samples)
+            return
+        
+        K_range = range(min_k, max_k + 1)
+        metrics = {'distortions': [], 'silhouette_scores': [], 'calinski_scores': []}
 
-        # Find the "elbow" point where inertia starts decreasing less rapidly
-        self.n_clusters = self.find_elbow_point(K_range, distortions)
+        try:
+            for k in K_range:
+                kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+                labels = kmeans.fit_predict(scaled_features)
+                
+                metrics['distortions'].append(kmeans.inertia_)
+                
+                if len(set(labels)) > 1:
+                    metrics['silhouette_scores'].append(silhouette_score(scaled_features, labels))
+                    metrics['calinski_scores'].append(calinski_harabasz_score(scaled_features, labels))
+                else:
+                    metrics['silhouette_scores'].append(0)
+                    metrics['calinski_scores'].append(0)
+        except Exception as e:
+            print(f"Warning: Error during metric calculation: {e}")
+            self.n_clusters = min_k
+            return
 
-        print(f"Using {self.n_clusters} clusters (Elbow Method)")
+        def safe_normalize(x):
+            x = np.array(x)
+            return (x - np.min(x)) / (np.max(x) - np.min(x)) if np.min(x) != np.max(x) else np.zeros_like(x)
 
-        # Plot the elbow graph
-        plt.figure(figsize=(8, 5))
-        plt.plot(K_range, distortions, marker='o', linestyle='-')
-        plt.xlabel('Number of Clusters (k)')
-        plt.ylabel('Distortion (Inertia)')
-        plt.title('Elbow Method for Optimal k')
-        plt.grid()
+        norm_distortions = safe_normalize(-np.array(metrics['distortions']))
+        norm_silhouette = safe_normalize(metrics['silhouette_scores'])
+        norm_calinski = safe_normalize(metrics['calinski_scores'])
+        
+        combined_scores = (0.3 * norm_distortions + 0.4 * norm_silhouette + 0.3 * norm_calinski)
+        optimal_idx = np.argmax(combined_scores)
+        self.n_clusters = K_range[optimal_idx]
+        
+        min_points_per_cluster = 15
+        if n_samples / self.n_clusters < min_points_per_cluster:
+            self.n_clusters = max(min_k, n_samples // min_points_per_cluster)
+        
+        print(f"Selected {self.n_clusters} clusters (adjusted from previous estimation).")
+
+        # Plot the results
+        plt.figure(figsize=(10, 5))
+        plt.plot(K_range, norm_distortions, label='Distortion (inertia)', marker='o')
+        plt.plot(K_range, norm_silhouette, label='Silhouette Score', marker='s')
+        plt.plot(K_range, norm_calinski, label='Calinski-Harabasz Score', marker='^')
+        plt.plot(K_range, combined_scores, label='Final Combined Score', marker='d', linestyle='--', color='black')
+        plt.axvline(self.n_clusters, color='r', linestyle='--', label=f'Optimal k = {self.n_clusters}')
+        plt.xlabel("Number of Clusters (k)")
+        plt.ylabel("Normalized Score")
+        plt.title("Determination of Optimal k")
+        plt.legend()
+        plt.grid(True)
         plt.show()
+
+
 
     def find_elbow_point(self, K_range, distortions):
         """Finds the optimal k using the elbow method"""
@@ -168,5 +229,5 @@ if __name__ == "__main__":
     input_path = "geo_points.json"
     output_path = "cluster_analysis.json"
     
-    kval = 10  # Set to 0 to use elbow method, or specify a fixed k
+    kval = 0  # Set to 0 to use elbow method, or specify a fixed k
     main(input_path, output_path, kval)
