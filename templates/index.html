@@ -32,21 +32,6 @@
         .isochrone-layer {
             mix-blend-mode: multiply;
         }
-        .cluster-circle {
-            stroke: #fff;
-            stroke-width: 2;
-        }
-        .cluster-label {
-            background: none;
-            border: none;
-            box-shadow: none;
-            font-weight: bold;
-            font-size: 14px;
-            color: #000;
-            text-align: center;
-            line-height: 20px;
-            text-shadow: 1px 1px 2px white;
-        }
     </style>
 </head>
 <body>
@@ -62,7 +47,6 @@
             <label><input type="checkbox" id="togglePoints" checked> Show Points</label>
             <label><input type="checkbox" id="toggleIsochrones" checked> Show Isochrones</label>
             <label><input type="checkbox" id="toggleRisk" checked> Show Risk Overview</label>
-            <label><input type="checkbox" id="toggleClusters" checked> Show Clusters</label>
             <label><input type="checkbox" id="toggleHeatmap" checked> Show Heatmap</label>
         </div>
     </div>
@@ -81,27 +65,12 @@
         // Initialize global variables
         let markers = [];
         let isochrones = [];
-        let clusterLayers = [];
         let riskCursor = null;
         let tempMarker = null;
         let addingPoint = false;
         let showRisk = true;
         let heatmapLayer = null;
         let heatmapPoints = [];
-
-        // Create cluster legend
-        const clusterLegend = L.control({ position: 'bottomleft' });
-        clusterLegend.onAdd = function(map) {
-            const div = L.DomUtil.create('div', 'legend');
-            div.innerHTML = `
-                <h4>Cluster Density</h4>
-                <div><span style="background: #4169E1">&nbsp;&nbsp;&nbsp;&nbsp;</span> Low Density</div>
-                <div><span style="background: #1E90FF">&nbsp;&nbsp;&nbsp;&nbsp;</span> Medium Density</div>
-                <div><span style="background: #00BFFF">&nbsp;&nbsp;&nbsp;&nbsp;</span> High Density</div>
-            `;
-            return div;
-        };
-        clusterLegend.addTo(map);
 
         // Create risk legend
         const riskLegend = L.control({ position: 'bottomright' });
@@ -118,12 +87,6 @@
         riskLegend.addTo(map);
 
         // Utility functions
-        function getClusterColor(density) {
-            if (density > 0.2) return '#00BFFF';
-            if (density > 0.15) return '#1E90FF';
-            return '#4169E1';
-        }
-
         function calculateRisk(overlaps) {
             return (0.2 * overlaps) + ((overlaps - 1) / 10);
         }
@@ -207,83 +170,7 @@
             }
         });
 
-        // Cluster visualization function
-        function createClusterVisualization(clusterData) {
-            clusterLayers.forEach(layer => map.removeLayer(layer));
-            clusterLayers = [];
-
-            if (!clusterData || !clusterData.clusters) {
-                console.warn('No cluster data available');
-                return;
-            }
-
-            clusterData.clusters.forEach((cluster, index) => {
-                try {
-                    // Create circle for cluster center
-                    const center = L.circle(
-                        [cluster.center.latitude, cluster.center.longitude],
-                        {
-                            color: getClusterColor(cluster.statistics.density),
-                            fillColor: getClusterColor(cluster.statistics.density),
-                            fillOpacity: 0.3,
-                            radius: cluster.statistics.size * 50,
-                            className: 'cluster-circle'
-                        }
-                    );
-
-                    // Add cluster number label
-                    const label = L.divIcon({
-                        html: index.toString(),
-                        className: 'cluster-label',
-                        iconSize: [20, 20],
-                        iconAnchor: [10, 10]
-                    });
-
-                    const labelMarker = L.marker(
-                        [cluster.center.latitude, cluster.center.longitude],
-                        { icon: label }
-                    );
-
-                    // Create bounds rectangle
-                    const bounds = L.rectangle(
-                        [
-                            [cluster.bounds.lat_min, cluster.bounds.lon_min],
-                            [cluster.bounds.lat_max, cluster.bounds.lon_max]
-                        ],
-                        {
-                            color: getClusterColor(cluster.statistics.density),
-                            weight: 2,
-                            fillOpacity: 0.1
-                        }
-                    );
-
-                    // Add popup with cluster information
-                    const popupContent = `
-                        <strong>Cluster ${index}</strong><br>
-                        Size: ${cluster.statistics.size} points<br>
-                        Density: ${cluster.statistics.density.toFixed(3)}<br>
-                        Peak Hour: ${cluster.statistics.peak_hour}:00<br>
-                        Lat Std: ${cluster.statistics.lat_std.toFixed(4)}<br>
-                        Lon Std: ${cluster.statistics.lon_std.toFixed(4)}
-                    `;
-                    
-                    center.bindPopup(popupContent);
-                    bounds.bindPopup(popupContent);
-
-                    clusterLayers.push(center);
-                    clusterLayers.push(bounds);
-                    clusterLayers.push(labelMarker);
-                    
-                    center.addTo(map);
-                    bounds.addTo(map);
-                    labelMarker.addTo(map);
-                } catch (error) {
-                    console.error('Error creating cluster visualization:', error);
-                }
-            });
-        }
-
-        function createHeatmap(data) {
+        function createHeatmap(data, squareSize = 0.00266) {
             // Remove existing heatmap if it exists
             if (heatmapLayer) {
                 map.removeLayer(heatmapLayer);
@@ -301,10 +188,12 @@
                     // Normalize density for visualization (0-1 range)
                     const normalizedDensity = point.density / maxDensity;
                     
-                    const circle = L.rectangle(
+                    // Create a square with configurable size
+                    const halfSize = squareSize / 2;
+                    const square = L.rectangle(
                         [
-                            [point.latitude - (0.0011), point.longitude - (0.00112)],
-                            [point.latitude + (0.00089), point.longitude + (0.00089)]
+                            [point.latitude - halfSize, point.longitude - halfSize],
+                            [point.latitude + halfSize, point.longitude + halfSize]
                         ],
                         {
                             color: 'transparent',
@@ -314,10 +203,9 @@
                         }
                     );
                     
-                    
                     // Add popup with density information
-                    circle.bindPopup(`Density: ${point.density.toFixed(2)}`);
-                    circle.addTo(heatmapLayer);
+                    square.bindPopup(`Density: ${point.density.toFixed(2)}`);
+                    square.addTo(heatmapLayer);
                 });
             }
         
@@ -364,19 +252,16 @@
         // Data loading function
         async function loadMapData() {
             try {
-                const [isochroneResponse, pointsResponse, clusterResponse] = await Promise.all([
+                const [isochroneResponse, pointsResponse] = await Promise.all([
                     fetch('/isochrones'),
-                    fetch('/points'),
-                    fetch('/clusters')
+                    fetch('/points')
                 ]);
 
                 if (!isochroneResponse.ok) throw new Error('Failed to load isochrones');
                 if (!pointsResponse.ok) throw new Error('Failed to load points');
-                if (!clusterResponse.ok) throw new Error('Failed to load clusters');
 
                 const isochroneData = await isochroneResponse.json();
                 const pointsData = await pointsResponse.json();
-                const clusterData = await clusterResponse.json();
 
                 // Process isochrones and points
                 const isochroneGroup = L.featureGroup().addTo(map);
@@ -417,9 +302,6 @@
                         marker.addTo(map);
                     }
                 });
-
-                // Create cluster visualization
-                createClusterVisualization(clusterData);
 
                 // Fit map bounds
                 if (markers.length > 0) {
@@ -524,13 +406,6 @@
             if (!showRisk && map.hasLayer(riskCursor)) {
                 map.removeLayer(riskCursor);
             }
-        });
-
-        document.getElementById('toggleClusters').addEventListener('change', (e) => {
-            clusterLayers.forEach(layer => {
-                if (e.target.checked) map.addLayer(layer);
-                else map.removeLayer(layer);
-            });
         });
 
         map.on('click', (e) => {
