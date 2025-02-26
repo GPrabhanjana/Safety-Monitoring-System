@@ -11,6 +11,7 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
+
 def load_data():
     """Load the geo points and zone data"""
     print("Loading geo points data...")
@@ -37,9 +38,6 @@ def load_data():
     # Load zone shapefile
     print("Loading zone shapefile...")
     zones_gdf = gpd.read_file('zone.shp')
-    
-    # Print columns for debugging
-    print("Columns in zones_gdf before renaming:", zones_gdf.columns.tolist())
 
     # Identify correct zone name column
     possible_names = ['name', 'zone', 'region', 'district', 'ZoneName', 'ZONE_NAME']
@@ -54,6 +52,7 @@ def load_data():
     print("Zone shapefile successfully loaded.")
     
     return points_gdf, zones_gdf
+
 
 def assign_points_to_zones(points_gdf, zones_gdf):
     """Assign each point to a zone using spatial join"""
@@ -71,6 +70,7 @@ def assign_points_to_zones(points_gdf, zones_gdf):
 
     return joined_gdf
 
+
 def aggregate_points_by_zone_and_time(joined_gdf, time_freq='D'):
     """Aggregate points by zone and time period"""
     print("Aggregating data by zone and time...")
@@ -82,6 +82,7 @@ def aggregate_points_by_zone_and_time(joined_gdf, time_freq='D'):
     zone_time_series = zone_time_counts.pivot(index='timestamp', columns='zone_name', values='count').fillna(0)
 
     return zone_time_series
+
 
 def fit_arima_by_zone(zone_time_series):
     """Fit ARIMA model for each zone"""
@@ -116,6 +117,7 @@ def fit_arima_by_zone(zone_time_series):
 
     return results
 
+
 def plot_forecasts(zone_time_series, arima_results, output_dir='zone_forecasts'):
     """Plot the historical data and forecasts for each zone"""
     print("Plotting forecasts...")
@@ -123,6 +125,7 @@ def plot_forecasts(zone_time_series, arima_results, output_dir='zone_forecasts')
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
+    # Plot individual zones
     for zone_name, result in arima_results.items():
         if result['status'] == 'success':
             plt.figure(figsize=(12, 6))
@@ -145,6 +148,38 @@ def plot_forecasts(zone_time_series, arima_results, output_dir='zone_forecasts')
             # Save plot
             plt.savefig(f'{output_dir}/{zone_name.replace(" ", "_")}_forecast.png')
             plt.close()
+
+    # Plot Total Forecast for Bengaluru
+    print("Plotting total forecast for Bengaluru...")
+    
+    total_series = zone_time_series.sum(axis=1)
+
+    try:
+        # Fit ARIMA model to total series
+        total_model = ARIMA(total_series, order=(1, 1, 1))
+        total_model_fit = total_model.fit()
+
+        # Forecast next 7 days
+        total_forecast = total_model_fit.forecast(steps=7)
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(total_series.index, total_series.values, 'b-', label='Total Historical Data')
+
+        forecast_index = pd.date_range(start=total_series.index[-1], periods=len(total_forecast) + 1, freq='D')[1:]
+        plt.plot(forecast_index, total_forecast.values, 'r--', label='Total Forecast')
+
+        plt.title('Total ARIMA Forecast for Bengaluru')
+        plt.xlabel('Date')
+        plt.ylabel('Total Point Count')
+        plt.legend()
+        plt.grid(True)
+
+        # Save total forecast plot
+        plt.savefig(f'{output_dir}/total_forecast.png')
+        plt.close()
+    except Exception as e:
+        print(f"Error in Total Forecast: {e}")
+
 
 def export_results(arima_results, zone_time_series, output_file='arima_results.json'):
     """Export ARIMA results to a JSON file"""
@@ -178,28 +213,21 @@ def export_results(arima_results, zone_time_series, output_file='arima_results.j
     with open(output_file, 'w') as f:
         json.dump(export_data, f, indent=2)
 
+
 def main():
     print("Starting Analysis...")
-    
-    # Load data
+
     points_gdf, zones_gdf = load_data()
-
-    # Assign points to zones
     joined_gdf = assign_points_to_zones(points_gdf, zones_gdf)
-
-    # Aggregate by zone and time
     zone_time_series = aggregate_points_by_zone_and_time(joined_gdf)
 
-    # Fit ARIMA models
     arima_results = fit_arima_by_zone(zone_time_series)
 
-    # Plot results
     plot_forecasts(zone_time_series, arima_results)
-
-    # Export results
     export_results(arima_results, zone_time_series)
 
-    print("Analysis complete! Results saved to 'arima_results.json' and plots in 'zone_forecasts'.")
+    print("Analysis complete! Results saved.")
+
 
 if __name__ == "__main__":
     main()
