@@ -1,4 +1,4 @@
-import json
+import json 
 import pandas as pd
 import matplotlib.pyplot as plt
 import geopandas as gpd
@@ -101,8 +101,8 @@ def create_zone_time_histograms():
             
             print(f"Created histogram for zone: {zone} ({len(zone_data)} points)")
     
-    # Create a combined histogram with all zones
-    create_combined_zone_histogram(joined_gdf, unique_zones, output_dir)
+    # Create a combined histogram with all zones (now a multi-bar graph)
+    create_multibar_zone_histogram(joined_gdf, unique_zones, output_dir)
     
     # Create total histogram
     create_total_histogram(joined_gdf, output_dir)
@@ -110,31 +110,50 @@ def create_zone_time_histograms():
     # Print summary statistics
     print_summary_statistics(joined_gdf)
 
-def create_combined_zone_histogram(joined_gdf, unique_zones, output_dir):
-    """Create a combined histogram showing all zones with different colors"""
-    print("Creating combined zone histogram...")
+def create_multibar_zone_histogram(joined_gdf, unique_zones, output_dir):
+    """Create a multi-bar graph showing data for all zones by hour"""
+    print("Creating multi-bar zone graph...")
     
+    # Prepare data for the multi-bar graph
+    # Get counts of data points by hour and zone
+    hourly_data = {}
+    
+    # Process each zone to get hourly counts
+    for zone in unique_zones:
+        zone_data = joined_gdf[joined_gdf['zone_name'] == zone]
+        if len(zone_data) > 0:
+            # Get counts by hour
+            hour_counts = zone_data.groupby(zone_data['timestamp'].dt.hour).size()
+            # Store in dictionary
+            hourly_data[zone] = [hour_counts.get(hour, 0) for hour in range(24)]
+    
+    # Setup figure and axes
     plt.figure(figsize=(16, 10))
+    
+    # Get hours for x-axis
+    hours = list(range(24))
+    
+    # Set bar width
+    bar_width = 0.8 / len(unique_zones)
     
     # Create a colormap for the zones
     colors = cm.rainbow(np.linspace(0, 1, len(unique_zones)))
     
-    # Create a list to store histogram data for the legend
-    hist_data = []
-    
-    # Plot histogram for each zone with a different color
+    # Plot bars for each zone
     for i, zone in enumerate(unique_zones):
-        zone_data = joined_gdf[joined_gdf['zone_name'] == zone]
-        
-        if len(zone_data) > 0:
-            # Create histogram and get the histogram data
-            counts, bins, patches = plt.hist(zone_data['hour'], 
-                                           bins=24,  # One bin per hour
-                                           edgecolor='black',
-                                           color=colors[i],
-                                           alpha=0.7,
-                                           label=zone)
-            hist_data.append((zone, len(zone_data), counts.sum()))
+        if zone in hourly_data:
+            # Calculate bar positions
+            bar_positions = [hour + (i - len(unique_zones)/2 + 0.5) * bar_width for hour in hours]
+            
+            plt.bar(
+                bar_positions,
+                hourly_data[zone],
+                width=bar_width,
+                color=colors[i],
+                edgecolor='black',
+                alpha=0.7,
+                label=zone
+            )
     
     # Customize the plot
     plt.title('Distribution of Geo Points Over Time by Zone', fontsize=16, pad=20)
@@ -142,9 +161,7 @@ def create_combined_zone_histogram(joined_gdf, unique_zones, output_dir):
     plt.ylabel('Number of Data Points', fontsize=14)
     
     # Set x-axis ticks to show hours
-    plt.xticks(range(0, 24), 
-              [f'{i:02d}:00' for i in range(24)],
-              rotation=45)
+    plt.xticks(range(0, 24), [f'{i:02d}:00' for i in range(24)], rotation=45)
     
     # Add grid for better readability
     plt.grid(True, alpha=0.3)
@@ -155,20 +172,20 @@ def create_combined_zone_histogram(joined_gdf, unique_zones, output_dir):
     # Adjust layout to prevent label cutoff
     plt.tight_layout()
     
-    # Save the combined plot
-    plt.savefig(f'{output_dir}/combined_zones_histogram.png', dpi=300, bbox_inches='tight')
+    # Save the multi-bar plot
+    plt.savefig(f'{output_dir}/multibar_zones_comparison.png', dpi=300, bbox_inches='tight')
     plt.close()
     
     # Create a sorted data table for the zones
-    hist_data.sort(key=lambda x: x[1], reverse=True)
+    zone_counts = joined_gdf.groupby('zone_name').size().sort_values(ascending=False)
     
     # Plot a bar chart showing the total points per zone
     plt.figure(figsize=(14, 8))
-    zones = [x[0] for x in hist_data]
-    counts = [x[1] for x in hist_data]
+    zones = zone_counts.index.tolist()
+    counts = zone_counts.values.tolist()
     
     # Create horizontal bar chart, sorted by count
-    plt.barh(range(len(zones)), counts, color=colors)
+    plt.barh(range(len(zones)), counts, color=colors[:len(zones)])
     plt.yticks(range(len(zones)), zones)
     plt.xlabel('Number of Data Points', fontsize=14)
     plt.title('Total Data Points by Zone', fontsize=16)
