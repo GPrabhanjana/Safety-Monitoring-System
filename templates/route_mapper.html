@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Route Mapper</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        .controls {
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #ddd;
+        }
+        .radio-group {
+            margin: 10px 0;
+        }
+        #map {
+            flex: 1;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .legend {
+            padding: 6px 8px;
+            background: white;
+            background: rgba(255,255,255,0.8);
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            border-radius: 5px;
+            line-height: 24px;
+            color: #555;
+        }
+        .legend i {
+            width: 18px;
+            height: 18px;
+            float: left;
+            margin: 0 8px 0 0;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="controls">
+            <h2>Route Mapper</h2>
+            <div class="radio-group">
+                <input type="radio" id="avoid0" name="avoidLevel" value="0" checked>
+                <label for="avoid0">Avoid Level 0</label>
+                <input type="radio" id="avoid01" name="avoidLevel" value="0,1">
+                <label for="avoid01">Avoid Level 0 and 1</label>
+            </div>
+            <button onclick="planRoute()">Plan Route</button>
+        </div>
+        <div id="map"></div>
+    </div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+    <script>
+        // Initialize map
+        const map = L.map('map').setView([12.9716, 77.5946], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // Create custom markers with colors
+        function createColoredMarker(latlng, color, isDraggable) {
+            return L.marker(latlng, {
+                draggable: isDraggable,
+                icon: L.divIcon({
+                    className: 'custom-div-icon',
+                    html: `<div style="background-color:${color}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`,
+                    iconSize: [20, 20],
+                    iconAnchor: [10, 10]
+                })
+            });
+        }
+
+        // Create start and end markers
+        const startMarker = createColoredMarker([12.9716, 77.5946], '#1e88e5', true).addTo(map);
+        const endMarker = createColoredMarker([12.9756, 77.5996], '#e53935', true).addTo(map);
+
+        // Add route layer
+        let routeLayer = null;
+        // Add cluster layers
+        let clusterLayers = {
+            0: L.layerGroup(),
+            1: L.layerGroup()
+        };
+
+        // Load clusters from API endpoint and display as circles
+        fetch('/clusters')
+            .then(response => response.json())
+            .then(data => {
+                console.log(`Loaded ${data.length} clusters`);
+                console.log('Raw cluster data:', data);
+
+                const allBounds = L.latLngBounds();
+
+                data.forEach(cluster => {
+                    console.log('Cluster:', cluster);
+                    const center = [cluster.center[0], cluster.center[1]];
+                    const radius = cluster.radius_meters;
+                    const color = cluster.level === 0 ? '#e53935' : '#ff9800';
+
+                    const circle = L.circle(center, {
+                        radius: radius,
+                        color: color,
+                        fillColor: color,
+                        fillOpacity: 0.2,
+                        weight: 2,
+                        opacity: 0.5
+                    });
+
+                    circle.bindTooltip(`Level ${cluster.level} Zone (ID: ${cluster.cluster_id})`);
+                    map.addLayer(circle);
+                    allBounds.extend(circle.getBounds());
+                });
+
+                map.fitBounds(allBounds, { padding: [50, 50] });
+            })
+            .catch(error => {
+                console.error('Error loading clusters:', error);
+                alert('Error loading cluster data. Check the console for details.');
+            });
+
+        // Add legend
+        const legend = L.control({position: 'bottomright'});
+        legend.onAdd = function(map) {
+            const div = L.DomUtil.create('div', 'legend');
+            div.innerHTML = `
+                <div><i style="background: #e53935"></i> Level 0 Zone</div>
+                <div><i style="background: #ff9800"></i> Level 1 Zone</div>
+                <div><i style="background: #1e88e5"></i> Start Location</div>
+                <div><i style="background: #e53935"></i> End Location</div>
+                <div><i style="background: #4CAF50"></i> Route</div>
+            `;
+            return div;
+        };
+        legend.addTo(map);
+
+        // Initialize geocoders
+        const startGeocoder = L.Control.geocoder({
+            defaultMarkGeocode: false,
+            position: 'topleft',
+            placeholder: 'Search start location...',
+            errorMessage: 'Nothing found.'
+        });
+
+        const endGeocoder = L.Control.geocoder({
+            defaultMarkGeocode: false,
+            position: 'topleft',
+            placeholder: 'Search end location...',
+            errorMessage: 'Nothing found.'
+        });
+
+        startGeocoder.addTo(map);
+        endGeocoder.addTo(map);
+
+        // Handle geocoding results
+        startGeocoder.on('markgeocode', function(e) {
+            startMarker.setLatLng(e.geocode.center);
+            map.flyTo(e.geocode.center, 15);
+        });
+
+        endGeocoder.on('markgeocode', function(e) {
+            endMarker.setLatLng(e.geocode.center);
+            map.flyTo(e.geocode.center, 15);
+        });
+
+        // Plan route function
+        async function planRoute() {
+            if (routeLayer) {
+                map.removeLayer(routeLayer);
+            }
+        
+            const avoidLevel = document.querySelector('input[name="avoidLevel"]:checked').value.split(',').map(Number);
+            const start = startMarker.getLatLng();
+            const end = endMarker.getLatLng();
+        
+            try {
+                const response = await fetch('/plan_route', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        start: [start.lat, start.lng],
+                        end: [end.lat, end.lng],
+                        avoid_levels: avoidLevel
+                    })
+                });
+        
+                const data = await response.json();
+                console.log('Route response:', data);
+        
+                if (data.trip && data.trip.legs && data.trip.legs.length > 0) {
+                    const leg = data.trip.legs[0];
+                    const decodedPoints = decodePolyline(leg.shape);
+        
+                    // Check if route intersects Level 0 zones (red areas)
+                    const clusters = await (await fetch('/clusters')).json();
+                    const level0Clusters = clusters.filter(c => c.level === 0);
+                    let intersectsRed = false;
+        
+                    for (const point of decodedPoints) {
+                        for (const cluster of level0Clusters) {
+                            const center = L.latLng(cluster.center[0], cluster.center[1]);
+                            const distance = map.distance(point, center);
+                            if (distance <= cluster.radius_meters) {
+                                intersectsRed = true;
+                                console.log('Route intersects Level 0 zone at:', point);
+                                break;
+                            }
+                        }
+                        if (intersectsRed) break;
+                    }
+        
+                    if (intersectsRed && avoidLevel.includes(0)) {
+                        alert('Warning: Route passes through a Level 0 zone despite avoidance setting!');
+                    }
+        
+                    routeLayer = L.polyline(decodedPoints, {
+                        color: '#4CAF50',
+                        weight: 6,
+                        opacity: 0.9
+                    }).addTo(map);
+        
+                    map.fitBounds(routeLayer.getBounds(), {padding: [50, 50]});
+                } else {
+                    console.error('No route found', data);
+                    alert('No route could be found. Please try different points.');
+                }
+            } catch (error) {
+                console.error('Error planning route:', error);
+                alert('Error planning route. Please try again.');
+            }
+        }
+
+        // Function to decode Valhalla polyline
+        function decodePolyline(str, precision) {
+            precision = precision || 6;
+            var index = 0,
+                lat = 0,
+                lng = 0,
+                coordinates = [],
+                shift = 0,
+                result = 0,
+                byte = null,
+                latitude_change,
+                longitude_change,
+                factor = Math.pow(10, precision);
+
+            while (index < str.length) {
+                byte = null;
+                shift = 0;
+                result = 0;
+
+                do {
+                    byte = str.charCodeAt(index++) - 63;
+                    result |= (byte & 0x1f) << shift;
+                    shift += 5;
+                } while (byte >= 0x20);
+
+                latitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
+                shift = result = 0;
+
+                do {
+                    byte = str.charCodeAt(index++) - 63;
+                    result |= (byte & 0x1f) << shift;
+                    shift += 5;
+                } while (byte >= 0x20);
+
+                longitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
+                lat += latitude_change;
+                lng += longitude_change;
+
+                coordinates.push([lat / factor, lng / factor]);
+            }
+
+            return coordinates;
+        }
+    </script>
+</body>
+</html>
