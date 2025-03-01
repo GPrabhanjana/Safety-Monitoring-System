@@ -188,70 +188,70 @@
 
         // Plan route function
         async function planRoute() {
-            if (routeLayer) {
-                map.removeLayer(routeLayer);
-            }
-        
-            const avoidLevel = document.querySelector('input[name="avoidLevel"]:checked').value.split(',').map(Number);
-            const start = startMarker.getLatLng();
-            const end = endMarker.getLatLng();
-        
-            try {
-                const response = await fetch('/plan_route', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        start: [start.lat, start.lng],
-                        end: [end.lat, end.lng],
-                        avoid_levels: avoidLevel
-                    })
-                });
-        
-                const data = await response.json();
-                console.log('Route response:', data);
-        
-                if (data.trip && data.trip.legs && data.trip.legs.length > 0) {
-                    const leg = data.trip.legs[0];
-                    const decodedPoints = decodePolyline(leg.shape);
-        
-                    // Check if route intersects Level 0 zones (red areas)
-                    const clusters = await (await fetch('/clusters')).json();
-                    const level0Clusters = clusters.filter(c => c.level === 0);
-                    let intersectsRed = false;
-        
-                    for (const point of decodedPoints) {
-                        for (const cluster of level0Clusters) {
-                            const center = L.latLng(cluster.center[0], cluster.center[1]);
-                            const distance = map.distance(point, center);
-                            if (distance <= cluster.radius_meters) {
-                                intersectsRed = true;
-                                console.log('Route intersects Level 0 zone at:', point);
-                                break;
-                            }
-                        }
-                        if (intersectsRed) break;
+    if (routeLayer) {
+        map.removeLayer(routeLayer);
+    }
+
+    const avoidLevel = document.querySelector('input[name="avoidLevel"]:checked').value.split(',').map(Number);
+    const start = startMarker.getLatLng();
+    const end = endMarker.getLatLng();
+
+    try {
+        const response = await fetch('/plan_route', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                start: [start.lat, start.lng],
+                end: [end.lat, end.lng],
+                avoid_levels: avoidLevel
+            })
+        });
+
+        const data = await response.json();
+        console.log('Route response:', data);
+
+        if (data.trip && data.trip.legs && data.trip.legs.length > 0) {
+            const leg = data.trip.legs[0];
+            const decodedPoints = decodePolyline(leg.shape);
+
+            // Check if route intersects Level 0 zones (red areas)
+            const clusters = await (await fetch('/clusters')).json();
+            const level0Clusters = clusters.filter(c => c.level === 0);
+            let intersectsRed = false;
+
+            for (const point of decodedPoints) {
+                for (const cluster of level0Clusters) {
+                    const center = L.latLng(cluster.center[0], cluster.center[1]);
+                    const distance = map.distance(point, center);
+                    if (distance <= cluster.radius_meters) {
+                        intersectsRed = true;
+                        console.log('Route intersects Level 0 zone at:', point);
+                        break;
                     }
-        
-                    if (intersectsRed && avoidLevel.includes(0)) {
-                        alert('Warning: Route passes through a Level 0 zone despite avoidance setting!');
-                    }
-        
-                    routeLayer = L.polyline(decodedPoints, {
-                        color: '#4CAF50',
-                        weight: 6,
-                        opacity: 0.9
-                    }).addTo(map);
-        
-                    map.fitBounds(routeLayer.getBounds(), {padding: [50, 50]});
-                } else {
-                    console.error('No route found', data);
-                    alert('No route could be found. Please try different points.');
                 }
-            } catch (error) {
-                console.error('Error planning route:', error);
-                alert('Error planning route. Please try again.');
+                if (intersectsRed) break;
             }
+
+            if (intersectsRed && avoidLevel.includes(0)) {
+                alert('Warning: Route passes through a Level 0 zone despite avoidance setting!');
+            }
+
+            routeLayer = L.polyline(decodedPoints, {
+                color: '#4CAF50',
+                weight: 6,
+                opacity: 0.9
+            }).addTo(map);
+
+            map.fitBounds(routeLayer.getBounds(), {padding: [50, 50]});
+        } else {
+            console.error('No route found', data);
+            alert('No route could be found. Please try different points.');
         }
+    } catch (error) {
+        console.error('Error planning route:', error);
+        alert('Error planning route. Please try again.');
+    }
+}
 
         // Function to decode Valhalla polyline
         function decodePolyline(str, precision) {
